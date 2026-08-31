@@ -1,0 +1,3 @@
+[submodule "teyuna"]
+	path = teyuna
+	url = https://github.com/srcolinas/teyuna.git

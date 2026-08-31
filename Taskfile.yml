@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+env:
+  BACKEND_PORT: '8000'
+  FRONTEND_PORT: '5173'
+  VITE_API_URL: 'http://localhost:8000'
+
+tasks:
+  clean:
+    desc: Remove cache files and dependencies from workspace
+    cmds:
+      - rm -rf logs/
+      - rm -rf .venv __pycache__ .mypy_cache .ruff_cache
+
+  setup:
+    desc: Setup project dependencies
+    deps: [clean]
+    cmds:
+      - uv add teyuna/packages/sdk-python
+      - uv add teyuna/packages/teyuna-core
+      - uv sync --dev
+    silent: true
+
+  format:
+    cmds:
+      - uv run ruff format src
+      - uv run ruff check --fix src
+
+  lint:
+    cmds:
+      - uv run ruff format --check src
+      - uv run ruff check src
+      - uv run mypy src
+
+  start-server:
+    desc: Launches the Teyuna server
+    dir: teyuna
+    cmds:
+      - docker compose up -d --wait
+
+  stop-server:
+    desc: Stop game
+    dir: teyuna
+    cmds:
+      - docker compose down
+
+  join:
+    desc: Join three builders to an existing game
+    silent: true
+    requires:
+      vars: [GAME_ID]
+    env:
+      GAME_ID: '{{.GAME_ID}}'
+    cmds:
+      - uv run teyuna-simulate join "$GAME_ID" --host "http://127.0.0.1:$BACKEND_PORT" builder:alice builder:bob builder:carol
+
+  run:
+    desc: Runs an agent to play against 3 builders
+    silent: true
+    cmds:
+      - task: start-server
+      - |
+        GAME_ID=$(uv run teyuna-simulate create --host "http://127.0.0.1:$BACKEND_PORT")
+        echo "Watch at http://127.0.0.1:${FRONTEND_PORT}/?gameId=${GAME_ID}"
+        task join GAME_ID="$GAME_ID"
+
+  stop:
+    desc: Stop all processes related to runing the experiment
+    deps: [stop-server]
+    cmds:
+      - echo 'Done!'
