@@ -8,7 +8,6 @@ from typing import Any, Final
 import httpx2
 import pydantic_ai
 from pydantic_ai import messages
-from pydantic_ai.messages import ModelMessage
 
 import settings
 
@@ -110,7 +109,7 @@ class Agent:
                     prompt, deps=deps, message_history=history
                 )
 
-                history = list[ModelMessage](result.all_messages())
+                history = list(result.all_messages())
 
                 await asyncio.sleep(self._settings.sleep_seconds)
 
