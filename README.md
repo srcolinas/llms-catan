@@ -8,8 +8,8 @@ Due to copyright restrictions and unavailability of LLM friendly game server imp
 
 Use three terminals (or keep the first two running in the background):
 
-1. Start Langfuse once per machine with `task setup-langfuse`, then `task start-langfuse-server`.
-2. Start the game server with `task start-server`.
+1. Start Langfuse once per machine with `task start-langfuse-server`.
+2. Start the game server with `task start-game-server`.
 3. Run a simulation with `task run AGENT_VERSION=v1`; replace `v1` with the agent version you wish to use.
 
 `task run` creates a game, joins two builder adversaries, then joins the agent. It expects the Langfuse stack and the Teyuna server to already be up.
