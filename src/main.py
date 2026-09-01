@@ -4,6 +4,9 @@ import uuid
 from collections.abc import Callable
 from typing import Protocol
 
+import pydantic_ai
+
+import langfuse
 import settings
 from agents import v1
 
@@ -26,8 +29,18 @@ async def main(game_id: uuid.UUID, base_url: str, agent_version: str) -> None:
     loglevel = logging.getLevelNamesMapping()[settings_.loglevel]
     logging.basicConfig(level=loglevel)
 
+    observer = langfuse.Langfuse(
+        public_key=settings_.langfuse_public_key.get_secret_value(),
+        secret_key=settings_.langfuse_secret_key.get_secret_value(),
+        base_url=settings_.langfuse_base_url,
+    )
+    pydantic_ai.Agent.instrument_all()
+
     agent = _AGENT_VERSIONS[agent_version](settings_)
-    await agent.loop(game_id=game_id, base_url=base_url)
+    try:
+        await agent.loop(game_id=game_id, base_url=base_url)
+    finally:
+        observer.flush()
 
 
 if __name__ == "__main__":

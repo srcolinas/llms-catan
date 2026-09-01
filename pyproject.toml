@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx2>=2.12.0",
+    "langfuse>=4.15.1",
     "pydantic>=2.13.5",
     "pydantic-ai>=2.36.0",
+    "pydantic-ai-slim[bedrock]>=2.36.0",
     "pydantic-settings>=2.15.0",
     "teyuna-core",
     "teyuna-sdk",

@@ -2,25 +2,48 @@
 
 version: '3'
 
+vars:
+  PORT: '8001'
+  AGENT_VERSION: 'v1'
+  RUN_FOLDER: '.run'
+
 env:
-  BACKEND_PORT: '8000'
-  FRONTEND_PORT: '5173'
-  VITE_API_URL: 'http://localhost:8000'
+  LANGFUSE_INIT_ORG_ID: llms-catan
+  LANGFUSE_INIT_ORG_NAME: llms-catan
+  LANGFUSE_INIT_PROJECT_ID: teyuna
+  LANGFUSE_INIT_PROJECT_NAME: teyuna
+  LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local-dev
+  LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local-dev
+  LANGFUSE_INIT_USER_EMAIL: dev@localhost.com
+  LANGFUSE_INIT_USER_NAME: dev
+  LANGFUSE_INIT_USER_PASSWORD: localdevpassword
+  LANGFUSE_PUBLIC_KEY: pk-lf-local-dev
+  LANGFUSE_SECRET_KEY: sk-lf-local-dev
+  LANGFUSE_BASE_URL: http://localhost:3000
 
 tasks:
   clean:
     desc: Remove cache files and dependencies from workspace
     cmds:
+      - rm -rf .venv .mypy_cache .ruff_cache
+      - find . -type d -name '__pycache__' -prune -exec rm -rf {} +
+      - find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 
+      - rm -rf teyuna/
       - rm -rf logs/
-      - rm -rf .venv __pycache__ .mypy_cache .ruff_cache
+      - rm -rf {{.RUN_FOLDER}}/
+      - rm -rf langfuse
 
   setup:
     desc: Setup project dependencies
     deps: [clean]
     cmds:
+      - git clone https://github.com/srcolinas/teyuna.git
       - uv add teyuna/packages/sdk-python
       - uv add teyuna/packages/teyuna-core
       - uv sync --dev
+      - task -d teyuna frontend:setup
+      - git clone https://github.com/langfuse/langfuse.git
+      - mkdir -p {{.RUN_FOLDER}}
     silent: true
 
   format:
@@ -34,40 +57,76 @@ tasks:
       - uv run ruff check src
       - uv run mypy src
 
-  start-server:
-    desc: Launches the Teyuna server
-    dir: teyuna
+  start-langfuse-server:
+    # ClickHouse gets OOM-killed (exit 137) unless the Docker VM has ~8GB of RAM.
+    dir: langfuse
     cmds:
-      - docker compose up -d --wait
+      - docker compose up
 
-  stop-server:
-    desc: Stop game
-    dir: teyuna
+  stop-langfuse-server:
+    dir: langfuse
     cmds:
       - docker compose down
 
-  join:
-    desc: Join three builders to an existing game
-    silent: true
-    requires:
-      vars: [GAME_ID]
+  start-game-server:
+    desc: Builds the observer UI and launches the Teyuna server
+    dir: teyuna
     env:
-      GAME_ID: '{{.GAME_ID}}'
+      # Durations are ISO 8601: pydantic rejects bare seconds from the environment.
+      TEYUNA_LOBBY_TIMEOUT: PT120S
+      TEYUNA_FIRST_PLACEMENT_TIMEOUT: PT180S
+      TEYUNA_SECOND_PLACEMENT_TIMEOUT: PT180S
+      TEYUNA_DICE_ROLL_TIMEOUT: PT120S
+      TEYUNA_DISCARD_RESOURCES_TIMEOUT: PT120S
+      TEYUNA_DICE_PLAY_WARRIOR_TIMEOUT: PT120S
+      TEYUNA_DICE_PLAY_MAMO_TIMEOUT: PT120S
+      TEYUNA_DICE_PLAY_BLESSED_TIMEOUT: PT120S
+      TEYUNA_DICE_PLAY_PATHFINDER_TIMEOUT: PT120S
+      TEYUNA_MOVE_CONQUISTATOR_TIMEOUT: PT120S
+      TEYUNA_TRADE_AND_BUILD_TIMEOUT: PT300S
+      TEYUNA_TRADE_AND_BUILD_PLAY_WARRIOR_TIMEOUT: PT120S
+      TEYUNA_TRADE_AND_BUILD_PLAY_MAMO_TIMEOUT: PT120S
+      TEYUNA_TRADE_AND_BUILD_PLAY_BLESSED_TIMEOUT: PT120S
+      TEYUNA_TRADE_AND_BUILD_PLAY_PATHFINDER_TIMEOUT: PT120S
     cmds:
-      - uv run teyuna-simulate join "$GAME_ID" --host "http://127.0.0.1:$BACKEND_PORT" builder:alice builder:bob builder:carol
+      - test -d apps/frontend/node_modules || task frontend:setup
+      - task run BACKEND_PORT={{.PORT}}
+
+  create-game:
+    desc: Create a game and store its id in the run folder
+    internal: true
+    cmds:
+      - uv run teyuna-simulate create --host "http://127.0.0.1:{{.PORT}}" > {{.RUN_FOLDER}}/game_id
+      - echo "Watch at http://127.0.0.1:{{.PORT}}/?gameId=$(cat {{.RUN_FOLDER}}/game_id)"
+
+  join-adversaries:
+    desc: Join two builders to the game recorded in the run folder
+    internal: true
+    silent: true
+    cmds:
+      - /bin/sh -c 'nohup uv run teyuna-simulate join "$(cat {{.RUN_FOLDER}}/game_id)" --host "http://127.0.0.1:{{.PORT}}" builder:alice builder:bob >/dev/null 2>&1 & echo $! >> {{.RUN_FOLDER}}/pids'
 
   run:
-    desc: Runs an agent to play against 3 builders
+    desc: Runs an agent to play against 2 builders
     silent: true
+    dotenv: ['.env']
+    env:
+      AWS_DEFAULT_PROFILE: lexi
     cmds:
-      - task: start-server
-      - |
-        GAME_ID=$(uv run teyuna-simulate create --host "http://127.0.0.1:$BACKEND_PORT")
-        echo "Watch at http://127.0.0.1:${FRONTEND_PORT}/?gameId=${GAME_ID}"
-        task join GAME_ID="$GAME_ID"
+      - defer: { task: stop }
+      - task: create-game
+      - task: join-adversaries
+      - uv run src/main.py --agent-version '{{.AGENT_VERSION}}' --base-url "http://127.0.0.1:{{.PORT}}" --game-id "$(cat {{.RUN_FOLDER}}/game_id)"
 
   stop:
-    desc: Stop all processes related to runing the experiment
-    deps: [stop-server]
+    desc: Kill the processes recorded in the run folder
     cmds:
-      - echo 'Done!'
+      - test -f {{.RUN_FOLDER}}/pids && xargs /bin/kill < {{.RUN_FOLDER}}/pids 2>/dev/null || true
+      
+  clean-run:
+    desc: remove left over files from previous run
+    cmds:
+      - cmd: rm {{.RUN_FOLDER}}/game_id
+        ignore_error: true
+      - cmd: rm {{.RUN_FOLDER}}/pids
+        ignore_error: true

@@ -1,3 +1,4 @@
+import asyncio
 import dataclasses
 import logging
 import string
@@ -6,6 +7,8 @@ from typing import Any, Final
 
 import httpx2
 import pydantic_ai
+from pydantic_ai import messages
+from pydantic_ai.messages import ModelMessage
 
 import settings
 
@@ -67,9 +70,21 @@ class Agent:
     def __init__(self, settings_: settings.Settings):
         self._settings = settings_
         self._agent = self._build_agent()
+        self._history_id = 0
 
     def _build_agent(self) -> pydantic_ai.Agent[Dependencies]:
-        raise NotImplementedError
+        rulebook = self._settings.rulebook.read_text()
+        howto = self._settings.howto.read_text()
+
+        agent = pydantic_ai.Agent(
+            model=self._settings.llm_model,
+            deps_type=Dependencies,
+            instructions=self._instructions.substitute(
+                rulebook=rulebook, howto=howto, nickname=self._nickname
+            ),
+            tools=[pydantic_ai.Tool(make_api_request, takes_ctx=True)],
+        )
+        return agent
 
     async def loop(
         self,
@@ -78,7 +93,26 @@ class Agent:
         base_url: str,
     ) -> None:
 
-        raise NotImplementedError
+        async with httpx2.AsyncClient(base_url=base_url) as client:
+            deps = Dependencies(client=client)
+            history: list[messages.ModelMessage] = []
+            while True:
+                prompt = (
+                    f"Continue playing Teyuna game `{game_id}`.\n"
+                    "1. If you have not joined yet, join with a unique nickname and "
+                    "remember the auth token.\n"
+                    "2. Otherwise fetch game state (and hand if useful), act only if "
+                    "required, then stop.\n"
+                    "Reply with a short summary of what you observed and what you did."
+                )
+
+                result = await self._agent.run(
+                    prompt, deps=deps, message_history=history
+                )
+
+                history = list[ModelMessage](result.all_messages())
+
+                await asyncio.sleep(self._settings.sleep_seconds)
 
 
 async def make_api_request(
@@ -111,7 +145,7 @@ async def make_api_request(
     try:
         data = response.json()
     except httpx2.HTTPStatusError as e:
-        logger.error("HTTP status error: {%s}", e)
+        logger.error("HTTP status error: %s", e)
         return HTTPResponse(
             status_code=response.status_code,
             data={},
