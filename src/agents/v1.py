@@ -27,7 +27,7 @@ class HTTPResponse:
 
 
 class Agent:
-    _nickname: Final[str] = "Hernán Darío"
+    _nickname: Final[str] = "Hernan Dario"
 
     _instructions: Final[string.Template] = string.Template(
         """
@@ -96,7 +96,7 @@ async def make_api_request(
     ctx: pydantic_ai.RunContext[Dependencies],
     method: str,
     endpoint: str,
-    bearer_token: str = "",
+    bearer_token: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> HTTPResponse:
     """Call the Teyuna game HTTP API.
@@ -117,6 +117,15 @@ async def make_api_request(
     headers = None
     if bearer_token is not None:
         headers = {"Authorization": f"Bearer {bearer_token}"}
+
+    logger.info(
+        "Making API request to %s with method %s and payload %s and headers %s",
+        endpoint,
+        method,
+        payload,
+        headers,
+    )
+
     response = await client.request(
         method=method, url=endpoint, json=payload, headers=headers
     )
@@ -132,9 +141,18 @@ async def make_api_request(
             headers=response_headers,
             error=str(e),
         )
-    return HTTPResponse(
+    resp = HTTPResponse(
         status_code=response.status_code,
         data=data,
         headers=response_headers,
         error=None,
     )
+    logger.info(
+        "API request to %s with method %s and payload %s and headers %s returned %s",
+        endpoint,
+        method,
+        payload,
+        headers,
+        resp,
+    )
+    return resp
