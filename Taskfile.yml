@@ -68,6 +68,12 @@ tasks:
     cmds:
       - docker compose down
 
+  clean-langfuse-server:
+    desc: Stop Langfuse and delete all persisted data
+    dir: langfuse
+    cmds:
+      - docker compose down -v
+
   start-game-server:
     desc: Builds the observer UI and launches the Teyuna server
     dir: teyuna

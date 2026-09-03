@@ -7,7 +7,6 @@ from typing import Any, Final
 
 import httpx2
 import pydantic_ai
-from pydantic_ai import messages
 
 import settings
 
@@ -28,40 +27,21 @@ class HTTPResponse:
 
 
 class Agent:
-    _nickname: Final[str] = "Hernan Darío"
+    _nickname: Final[str] = "Hernán Darío"
 
     _instructions: Final[string.Template] = string.Template(
         """
         Your nickname is $nickname.
         You are a skilled Teyuna player (a Catan-like game).
-        Your goal is to reach 10 victory points before your opponents.
+        You are given the rulebook and a guide about how to play the game
+        and you need to figure out things by yourself.
 
-        ## Interface
-        Play exclusively through `make_api_request`. Paths are relative to
-        the API base URL.
-        - If you are unsure about endpoints or request/response schemas,
-          GET `/openapi.json` once and reuse what you learn.
-        - Join with POST `/games/{game_id}/players` and a unique nickname
-          (do not reuse names already seated).
-        - Persist the `token` from the join response. On later authenticated
-          calls (hand, actions, etc.), pass
-          `headers={"Authorization": "Bearer <token>"}`.
-        - Submit moves with POST `/games/{game_id}/actions` using the
-          `kind` and fields from the how-to below.
-        - Inspect public state with GET `/games/{game_id}` and your private
-          hand with GET `/games/{game_id}/hand` when needed.
+        The first action you will need to do is to join the game. Afterwards,
+        you will be prompted to check the game state and perform the best possible
+        action. 
 
-        ## Turn discipline
-        Each tick: read game state, then act only when required (see how-to).
-        Prefer legal, high-value moves. If a request returns 400, read the
-        error detail, correct the payload, and retry once if still useful.
-        Do not re-join after you already have a token. Do not spam the same
-        failed action.
-
-        ## Rulebook
         $rulebook
 
-        ## How to play
         $howto
         """
     )
@@ -76,12 +56,17 @@ class Agent:
         howto = self._settings.howto.read_text()
 
         agent = pydantic_ai.Agent(
+            name=f"bare-{self._settings.llm_model.model_name}",
             model=self._settings.llm_model,
             deps_type=Dependencies,
             instructions=self._instructions.substitute(
                 rulebook=rulebook, howto=howto, nickname=self._nickname
             ),
-            tools=[pydantic_ai.Tool(make_api_request, takes_ctx=True)],
+            tools=[
+                pydantic_ai.Tool(
+                    make_api_request, takes_ctx=True, max_retries=5
+                )
+            ],
         )
         return agent
 
@@ -94,22 +79,15 @@ class Agent:
 
         async with httpx2.AsyncClient(base_url=base_url) as client:
             deps = Dependencies(client=client)
-            history: list[messages.ModelMessage] = []
             while True:
                 prompt = (
-                    f"Continue playing Teyuna game `{game_id}`.\n"
-                    "1. If you have not joined yet, join with a unique nickname and "
-                    "remember the auth token.\n"
-                    "2. Otherwise fetch game state (and hand if useful), act only if "
-                    "required, then stop.\n"
-                    "Reply with a short summary of what you observed and what you did."
+                    f"You are playing game {game_id}, now:\n"
+                    "1. Figure out if there is any action for you to take\n"
+                    "2. If there are some actions for you, pick the best possible action.\n"
+                    "3. Reply with a short summary of what you observed and what you did.\n"
                 )
 
-                result = await self._agent.run(
-                    prompt, deps=deps, message_history=history
-                )
-
-                history = list(result.all_messages())
+                await self._agent.run(prompt, deps=deps)
 
                 await asyncio.sleep(self._settings.sleep_seconds)
 
@@ -118,24 +96,27 @@ async def make_api_request(
     ctx: pydantic_ai.RunContext[Dependencies],
     method: str,
     endpoint: str,
-    payload: dict[str, Any],
-    headers: dict[str, str] | None = None,
+    bearer_token: str = "",
+    payload: dict[str, Any] | None = None,
 ) -> HTTPResponse:
     """Call the Teyuna game HTTP API.
 
     Args:
         method: HTTP method such as "GET" or "POST".
         endpoint: Path relative to the API base URL
-            (e.g. "/openapi.json", "/games/{game_id}", "/games/{game_id}/actions").
-        payload: JSON body for POST requests. Use an empty dict for GET.
-        headers: Optional HTTP headers. After joining, pass
-            {"Authorization": "Bearer <token>"} on authenticated endpoints.
+            (e.g. "/some/endpoint").
+        payload: JSON body for POST requests. Ignore for GET requests.
+        bearer_token: token to use in endpoints that require authentication.
+            Ignore for endpoints that don't require authentication.
 
     Returns:
         status_code, parsed JSON data (when available), response headers, and
         any error message. Read error/detail fields carefully on non-2xx responses.
     """
     client = ctx.deps.client
+    headers = None
+    if bearer_token is not None:
+        headers = {"Authorization": f"Bearer {bearer_token}"}
     response = await client.request(
         method=method, url=endpoint, json=payload, headers=headers
     )
