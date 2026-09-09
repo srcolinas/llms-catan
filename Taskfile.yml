@@ -6,6 +6,7 @@ vars:
   PORT: '8001'
   AGENT_VERSION: 'v1'
   RUN_FOLDER: '.run'
+  LOGLEVEL: 'DEBUG'
 
 env:
   LANGFUSE_INIT_ORG_ID: llms-catan
@@ -94,6 +95,7 @@ tasks:
       TEYUNA_TRADE_AND_BUILD_PLAY_MAMO_TIMEOUT: PT120S
       TEYUNA_TRADE_AND_BUILD_PLAY_BLESSED_TIMEOUT: PT120S
       TEYUNA_TRADE_AND_BUILD_PLAY_PATHFINDER_TIMEOUT: PT120S
+      TEYUNA_LOGLEVEL: '{{.LOGLEVEL}}'
     cmds:
       - test -d apps/frontend/node_modules || task frontend:setup
       - task run BACKEND_PORT={{.PORT}}
@@ -118,6 +120,8 @@ tasks:
     dotenv: ['.env']
     env:
       AWS_DEFAULT_PROFILE: lexi
+      AWS_REGION: us-east-1
+      TEYUNA_LOGLEVEL: '{{.LOGLEVEL}}'
     cmds:
       - defer: { task: stop }
       - task: create-game

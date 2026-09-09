@@ -1111,6 +1111,7 @@ dependencies = [
     { name = "pydantic-ai" },
     { name = "pydantic-ai-slim", extra = ["bedrock"] },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "teyuna-core" },
     { name = "teyuna-sdk" },
 ]
@@ -1129,6 +1130,7 @@ requires-dist = [
     { name = "pydantic-ai", specifier = ">=2.36.0" },
     { name = "pydantic-ai-slim", extras = ["bedrock"], specifier = ">=2.36.0" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "teyuna-core", editable = "teyuna/packages/teyuna-core" },
     { name = "teyuna-sdk", editable = "teyuna/packages/sdk-python" },
 ]
