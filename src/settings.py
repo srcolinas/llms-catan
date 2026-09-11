@@ -1,9 +1,10 @@
 import functools
 import pathlib
-from typing import Literal
+from typing import Literal, cast
 
 import dotenv
 import pydantic
+import pydantic_ai
 import pydantic_settings
 
 
@@ -35,6 +36,14 @@ class Settings(pydantic_settings.BaseSettings):
 
     llm_model: str
     """pydantic-ai model id in `provider:model` form, e.g. `openai:gpt-4o`."""
+
+    @property
+    def model_settings(self) -> pydantic_ai.ModelSettings:
+        # `openai_reasoning_summary` lives on `OpenAIResponsesModelSettings`, but settings
+        # are a flat dict that each model reads selectively, so other providers ignore it.
+        return cast(
+            pydantic_ai.ModelSettings, {"openai_reasoning_summary": "auto"}
+        )
 
 
 @functools.cache

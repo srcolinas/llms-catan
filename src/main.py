@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable
 from typing import Protocol
 
 import pydantic_ai
@@ -19,10 +18,17 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 class Agent(Protocol):
-    async def loop(self, *, game_id: uuid.UUID, base_url: str) -> None: ...
+    def __init__(
+        self,
+        game_id: uuid.UUID,
+        base_url: str,
+        settings_: settings.Settings,
+    ) -> None: ...
+
+    async def loop(self) -> None: ...
 
 
-_AGENT_VERSIONS: dict[str, Callable[[settings.Settings], Agent]] = {
+_AGENT_VERSIONS: dict[str, type[Agent]] = {
     "v1": v1.Agent,
 }
 
@@ -39,9 +45,9 @@ async def main(game_id: uuid.UUID, base_url: str, agent_version: str) -> None:
     )
     pydantic_ai.Agent.instrument_all()
 
-    agent = _AGENT_VERSIONS[agent_version](settings_)
+    agent = _AGENT_VERSIONS[agent_version](game_id, base_url, settings_)
     try:
-        await agent.loop(game_id=game_id, base_url=base_url)
+        await agent.loop()
     finally:
         observer.flush()
 

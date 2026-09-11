@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import json
 import logging
 import string
 import uuid
@@ -22,21 +23,6 @@ class Dependencies:
     client: httpx2.AsyncClient
 
 
-class HTTPResponse(pydantic.BaseModel):
-    status_code: int = pydantic.Field(description="HTTP status code.")
-    data: dict[str, Any] = pydantic.Field(
-        description="Parsed JSON data when available."
-    )
-    headers: dict[str, str] = pydantic.Field(description="Response headers.")
-    error: str | None = pydantic.Field(
-        default=None,
-        description=(
-            "Error message, if any. Read error/detail fields carefully "
-            "on non-2xx responses."
-        ),
-    )
-
-
 class Agent:
     _nickname: Final[str] = "Hernan Dario"
 
@@ -49,7 +35,8 @@ class Agent:
         Your nickname is $nickname.
         
         Your role is to play the game on your own (as $nickname), using the
-        make_api_request tool to interact with the game API.
+        make_api_request tool to interact with the game API. Never streaming
+        endpoints like /events, because the tool doesn't support it.
         
         Don't ask the user for confirmation, guidance or anything else, 
         the user will just tell you when you need to respond and the results 
@@ -62,24 +49,34 @@ class Agent:
         $rulebook
 
         $howto
+
+        The game id is $game_id.
         """
     )
 
-    def __init__(self, settings_: settings.Settings):
+    def __init__(
+        self, game_id: uuid.UUID, base_url: str, settings_: settings.Settings
+    ):
         self._settings = settings_
-        self._agent = self._build_agent()
-        self._history_id = 0
+        self._agent = self._build_agent(game_id)
+        self._game_server_url = base_url
 
-    def _build_agent(self) -> pydantic_ai.Agent[Dependencies]:
+    def _build_agent(
+        self, game_id: uuid.UUID
+    ) -> pydantic_ai.Agent[Dependencies]:
         rulebook = self._settings.rulebook.read_text()
         howto = self._settings.howto.read_text()
 
         agent = pydantic_ai.Agent(
             name=f"bare-{self._settings.llm_model}",
             model=self._settings.llm_model,
+            model_settings=self._settings.model_settings,
             deps_type=Dependencies,
             instructions=self._instructions.substitute(
-                rulebook=rulebook, howto=howto, nickname=self._nickname
+                rulebook=rulebook,
+                howto=howto,
+                nickname=self._nickname,
+                game_id=str(game_id),
             ),
             tools=[
                 pydantic_ai.Tool(
@@ -90,16 +87,10 @@ class Agent:
         )
         return agent
 
-    async def loop(
-        self,
-        *,
-        game_id: uuid.UUID,
-        base_url: str,
-    ) -> None:
+    async def loop(self) -> None:
 
-        async with httpx2.AsyncClient(base_url=base_url) as client:
+        async with httpx2.AsyncClient(base_url=self._game_server_url) as client:
             deps = Dependencies(client=client)
-            await self._agent.run(f"The game is {game_id}", deps=deps)
             while True:
                 prompt = (
                     "1. Figure out if there is any action for you to take (join, advance, build, trade, etc.)\n"
@@ -171,6 +162,24 @@ class RequestParams(pydantic.BaseModel):
     )
 
 
+class HTTPResponse(pydantic.BaseModel):
+    status_code: int = pydantic.Field(description="HTTP status code.")
+    data: dict[str, Any] | list[Any] | None = pydantic.Field(
+        description=(
+            "Parsed JSON data when available. If parsing fails, return "
+            "None,together with the error message."
+        ),
+    )
+    headers: dict[str, str] = pydantic.Field(description="Response headers.")
+    error: str | None = pydantic.Field(
+        default=None,
+        description=(
+            "Error message, if any. Read error/detail fields carefully "
+            "on non-2xx responses."
+        ),
+    )
+
+
 async def make_api_request(
     ctx: pydantic_ai.RunContext[Dependencies],
     params: RequestParams,
@@ -199,11 +208,11 @@ async def make_api_request(
 
     try:
         data = response.json()
-    except httpx2.HTTPStatusError as e:
-        logger.error("HTTP status error: %s", e)
+    except (httpx2.HTTPStatusError, json.JSONDecodeError) as e:
+        logger.error("Error decoding server response: %s", e)
         return HTTPResponse(
             status_code=response.status_code,
-            data={},
+            data=None,
             headers=response_headers,
             error=str(e),
         )
