@@ -21,6 +21,7 @@ class Settings(pydantic_settings.BaseSettings):
 
     rulebook: pathlib.Path
     howto: pathlib.Path
+    board_description: pathlib.Path
 
     langfuse_public_key: pydantic.SecretStr = pydantic.Field(
         validation_alias=pydantic.AliasChoices("LANGFUSE_PUBLIC_KEY")
