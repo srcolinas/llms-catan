@@ -15,6 +15,8 @@ from pydantic_ai.tools import ToolDefinition
 
 import settings
 
+from . import do_nothing
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +44,8 @@ class Agent:
         the user will just tell you when you need to respond and the results 
         of tool calls you requested.
 
+        You cannot move the game with text. Every turn must call a tool.
+
         When prompted by the user the first time, you need to join the game. 
         Afterwards, the user will continue to prompt you and you need to
         figure out what to do.
@@ -49,6 +53,8 @@ class Agent:
         $rulebook
 
         $howto
+
+        $board_description
 
         The game id is $game_id.
         """
@@ -66,7 +72,7 @@ class Agent:
     ) -> pydantic_ai.Agent[Dependencies]:
         rulebook = self._settings.rulebook.read_text()
         howto = self._settings.howto.read_text()
-
+        board_description = self._settings.board_description.read_text()
         agent = pydantic_ai.Agent(
             name=f"bare-{self._settings.llm_model}",
             model=self._settings.llm_model,
@@ -75,13 +81,15 @@ class Agent:
             instructions=self._instructions.substitute(
                 rulebook=rulebook,
                 howto=howto,
+                board_description=board_description,
                 nickname=self._nickname,
                 game_id=str(game_id),
             ),
             tools=[
                 pydantic_ai.Tool(
                     make_api_request, takes_ctx=True, max_retries=5
-                )
+                ),
+                do_nothing.tool,
             ],
             capabilities=[_tool_arg_logging_hooks],
         )
@@ -95,7 +103,7 @@ class Agent:
                 prompt = (
                     "1. Figure out if there is any action for you to take (join, advance, build, trade, etc.)\n"
                     "2. If there are many possible actions for you to take, pick the best.\n"
-                    "3. Reply with a short summary of your conclusions and what you did.\n"
+                    "3. After you have used a tool, tell a short summary of what you did.\n"
                 )
 
                 await self._agent.run(prompt, deps=deps)
