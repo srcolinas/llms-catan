@@ -1,10 +1,13 @@
 import asyncio
+import datetime
 import json
+import logging
 import string
 import uuid
 from collections.abc import Sequence
 from typing import Final
 
+import httpx2
 import pydantic_ai
 import teyuna_core
 import teyuna_sdk
@@ -14,6 +17,17 @@ import settings
 from . import do_nothing, toolsets
 
 type _Toolset = pydantic_ai.FunctionToolset[toolsets.Dependencies]
+
+logger = logging.getLogger(__name__)
+
+_PHASE_DEADLINE_BUFFER: Final[datetime.timedelta] = datetime.timedelta(
+    seconds=20
+)
+
+_ADVANCE_TOOLSETS: Final[tuple[_Toolset, ...]] = (
+    toolsets.roll_dice,
+    toolsets.end_turn,
+)
 
 
 class Agent:
@@ -85,6 +99,7 @@ class Agent:
             base_url=self._game_server_url, game_id=self._game_id
         )
         client = await client.authenticate(self._nickname)
+        logger.info("Authenticated as %s with token %s", self._nickname, client.token)
         agent: pydantic_ai.Agent[toolsets.Dependencies] | None = None
         while True:
             game = await client.get_game()
@@ -97,6 +112,25 @@ class Agent:
             if selected is None:
                 await asyncio.sleep(self._settings.sleep_seconds)
                 continue
+            if _phase_deadline_soon(
+                game.phase_deadline, _PHASE_DEADLINE_BUFFER
+            ):
+                is_active = (
+                    bool(game.turn_order)
+                    and game.turn_order[0] == self._nickname
+                )
+                if is_active and _can_auto_advance(selected):
+                    logger.info(
+                        "Phase deadline in less than %s; submitting advance",
+                        _PHASE_DEADLINE_BUFFER,
+                    )
+                    try:
+                        await client.submit_action(teyuna_core.PlayerAction())
+                    except httpx2.HTTPStatusError as e:
+                        logger.error("Error submitting advance: %s", e)
+                else:
+                    await asyncio.sleep(self._settings.sleep_seconds)
+                continue
             hand = await client.get_hand()
             prompt = (
                 f"Your hand: {hand.model_dump_json(indent=2)}\n"
@@ -108,6 +142,26 @@ class Agent:
                 client=client, game=game, nickname=self._nickname
             )
             await agent.run(prompt, deps=deps, toolsets=selected)
+
+
+def _phase_deadline_soon(
+    phase_deadline: datetime.datetime | None, buffer: datetime.timedelta
+) -> bool:
+    if phase_deadline is None:
+        return False
+    deadline = phase_deadline
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=datetime.UTC)
+    remaining = deadline - datetime.datetime.now(datetime.UTC)
+    return remaining < buffer
+
+
+def _can_auto_advance(selected: Sequence[_Toolset]) -> bool:
+    return any(
+        toolset is advance
+        for toolset in selected
+        for advance in _ADVANCE_TOOLSETS
+    )
 
 
 def _turn_state_json(game: teyuna_core.Game) -> str:

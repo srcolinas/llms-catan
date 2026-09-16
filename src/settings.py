@@ -19,6 +19,8 @@ class Settings(pydantic_settings.BaseSettings):
 
     loglevel: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    events_log: pathlib.Path = pathlib.Path("events.log")
+
     rulebook: pathlib.Path
     howto: pathlib.Path
     board_description: pathlib.Path
